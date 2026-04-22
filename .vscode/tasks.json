@@ -18,12 +18,51 @@
             }
         },
         {
+            "label": "Build Lidar Packet Benchmark",
+            "type": "process",
+            "command": "${userHome}/.pico-sdk/cmake/v3.31.5/bin/cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build",
+                "--target",
+                "lidar_packet_benchmark"
+            ],
+            "group": "build",
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
+            "problemMatcher": "$gcc",
+            "windows": {
+                "command": "${env:USERPROFILE}/.pico-sdk/cmake/v3.31.5/bin/cmake.exe"
+            }
+        },
+        {
             "label": "Run Project",
             "type": "process",
             "command": "${env:HOME}/.pico-sdk/picotool/2.2.0-a4/picotool/picotool",
             "args": [
                 "load",
                 "${command:raspberry-pi-pico.launchTargetPath}",
+                "-fx"
+            ],
+            "presentation": {
+                "reveal": "always",
+                "panel": "dedicated"
+            },
+            "problemMatcher": [],
+            "windows": {
+                "command": "${env:USERPROFILE}/.pico-sdk/picotool/2.2.0-a4/picotool/picotool.exe"
+            }
+        },
+        {
+            "label": "Flash Lidar Packet Benchmark",
+            "type": "process",
+            "dependsOn": "Build Lidar Packet Benchmark",
+            "command": "${env:HOME}/.pico-sdk/picotool/2.2.0-a4/picotool/picotool",
+            "args": [
+                "load",
+                "${workspaceFolder}/build/lidar_packet_benchmark.elf",
                 "-fx"
             ],
             "presentation": {

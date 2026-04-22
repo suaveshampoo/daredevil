@@ -1,2 +1,5 @@
 build
 !.vscode/*
+saved_scans/
+__pycache__/
+*.pyc
