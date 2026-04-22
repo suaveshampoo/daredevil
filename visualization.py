@@ -11,6 +11,13 @@ from pathlib import Path
 
 
 DEFAULT_STEPS_PER_REV = 810.0
+DEFAULT_MAX_AZIMUTH_DEG = 180.0
+DEFAULT_MAX_AZIMUTH_STEPS = int(DEFAULT_STEPS_PER_REV / 2.0)
+DEFAULT_PACKETS_PER_SWEEP = 1080
+DEFAULT_STEP_DELAY_US = 3700
+DEFAULT_STEP_SETTLE_MS = 10
+DEFAULT_SWEEP_TIMEOUT_MS = 15000
+DEFAULT_BYTE_TIMEOUT_MS = 20
 BASE_DISTANCE_TOLERANCE_MM = 45.0
 BASE_DISTANCE_TOLERANCE_RATIO = 0.05
 DENSE_MIN_CLUSTER_SAMPLES = 2
@@ -692,7 +699,6 @@ def capture_from_serial(args: argparse.Namespace) -> int:
     try:
         print_status(f"Opening {args.port} at {args.baud} baud...")
         serial_port = Serial(args.port, args.baud, timeout=0.1)
-        serial_port.reset_input_buffer()
         print_status("Serial port opened. Waiting for scan stream...")
     except SerialException as exc:
         print(f"Could not open {args.port}: {exc}", file=sys.stderr)
@@ -700,9 +706,20 @@ def capture_from_serial(args: argparse.Namespace) -> int:
 
     raw_samples: list[tuple[int, float, float, int]] = []
     accepted_points = 0
-    scan_meta: dict[str, float | int | str | bool] = {}
+    scan_meta: dict[str, float | int | str | bool] = {
+        "max_azimuth_deg": DEFAULT_MAX_AZIMUTH_DEG,
+        "max_azimuth_steps": DEFAULT_MAX_AZIMUTH_STEPS,
+        "packets_per_sweep": DEFAULT_PACKETS_PER_SWEEP,
+        "step_delay_us": DEFAULT_STEP_DELAY_US,
+        "step_settle_ms": DEFAULT_STEP_SETTLE_MS,
+        "sweep_timeout_ms": DEFAULT_SWEEP_TIMEOUT_MS,
+        "byte_timeout_ms": DEFAULT_BYTE_TIMEOUT_MS,
+        "metadata_source": "defaults",
+        "config_source": "defaults",
+    }
     last_step_seen: int | None = None
     last_progress_bucket = -1
+    warned_mid_scan_attach = False
 
     try:
         while True:
@@ -731,6 +748,7 @@ def capture_from_serial(args: argparse.Namespace) -> int:
             kind, payload = parsed
             if kind == "meta":
                 scan_meta["max_azimuth_deg"], scan_meta["max_azimuth_steps"] = payload
+                scan_meta["metadata_source"] = "firmware"
                 print_status(
                     f"Scan metadata received: "
                     f"{scan_meta['max_azimuth_deg']:.1f} deg sweep, "
@@ -746,6 +764,7 @@ def capture_from_serial(args: argparse.Namespace) -> int:
                     scan_meta["sweep_timeout_ms"],
                     scan_meta["byte_timeout_ms"],
                 ) = payload
+                scan_meta["config_source"] = "firmware"
                 print_status(
                     "Capture config received: "
                     f"{scan_meta['packets_per_sweep']} packets/sweep, "
@@ -771,6 +790,14 @@ def capture_from_serial(args: argparse.Namespace) -> int:
                 continue
             if distance_mm <= 0 or distance_mm > args.max_distance:
                 continue
+
+            if not warned_mid_scan_attach and scan_meta.get("metadata_source") != "firmware":
+                print_status(
+                    "Point stream detected before firmware metadata; "
+                    f"using defaults ({DEFAULT_MAX_AZIMUTH_DEG:.1f} deg, "
+                    f"{DEFAULT_MAX_AZIMUTH_STEPS} steps) for progress and settings"
+                )
+                warned_mid_scan_attach = True
 
             last_step_seen, last_progress_bucket = maybe_report_sweep_progress(
                 step_count,

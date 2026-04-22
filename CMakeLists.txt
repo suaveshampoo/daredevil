@@ -49,6 +49,7 @@ add_executable(spin spin.c)
 add_executable(lidar_scan lidar_scan.c)
 add_executable(lidar_packet_benchmark lidar_packet_benchmark.c lidar_scan.c)
 add_executable(merged_scan merged_scan.c spin.c lidar_scan.c)
+add_executable(continuous_scan continuous_scan.c spin.c lidar_scan.c)
 
 # Generate PIO header
 pico_generate_pio_header(daredevil ${CMAKE_CURRENT_LIST_DIR}/blink.pio)
@@ -58,6 +59,7 @@ configure_pico_target(spin)
 configure_pico_target(lidar_scan)
 configure_pico_target(lidar_packet_benchmark)
 configure_pico_target(merged_scan)
+configure_pico_target(continuous_scan)
 
 target_link_libraries(daredevil
         pico_stdlib
@@ -79,6 +81,11 @@ target_link_libraries(merged_scan
         pico_stdlib
         hardware_uart
 )
+target_link_libraries(continuous_scan
+        pico_stdlib
+        hardware_uart
+)
 
 target_compile_definitions(lidar_packet_benchmark PRIVATE LIDAR_SCAN_NO_MAIN)
 target_compile_definitions(merged_scan PRIVATE SPIN_NO_MAIN LIDAR_SCAN_NO_MAIN)
+target_compile_definitions(continuous_scan PRIVATE SPIN_NO_MAIN LIDAR_SCAN_NO_MAIN)
