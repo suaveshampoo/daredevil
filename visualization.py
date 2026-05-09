@@ -26,17 +26,14 @@ SWEEP_PROGRESS_BUCKETS = 20
 PROGRESS_PRINT_INTERVAL = 50000
 TIMESTAMP_PATTERN = re.compile(r"^(?P<prefix>.+)_(?P<date>\d{8})_(?P<time>\d{6})_(?P<micros>\d{6})(?P<suffix>.*)$")
 PROGRAM_START_MONOTONIC = time.monotonic()
+PointRecord = tuple[float, float, float, float, int]
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Capture merged_scan output and export point clouds for CloudCompare."
+        description="Capture merged_scan output and save point cloud CSV files."
     )
     parser.add_argument("--port", help="Serial port, for example COM5")
-    parser.add_argument(
-        "--input-csv",
-        help="Existing saved scan CSV to convert into a CloudCompare-friendly ASCII file",
-    )
     parser.add_argument("--baud", type=int, default=115200, help="Serial baud rate")
     parser.add_argument(
         "--min-quality",
@@ -98,8 +95,8 @@ def parse_args() -> argparse.Namespace:
     args = parser.parse_args()
     if args.organize_only:
         return args
-    if not args.port and not args.input_csv:
-        parser.error("one of --port or --input-csv is required")
+    if not args.port:
+        parser.error("--port is required unless --organize-only is used")
     return args
 
 
@@ -253,24 +250,9 @@ def organize_existing_scans(output_dir: str) -> int:
 
 def save_points(
     base_path: Path,
-    points_by_voxel: dict[tuple[int, int, int], tuple[float, float, float, float, int]],
-) -> tuple[Path, Path]:
-    csv_path = base_path.with_name(f"{base_path.name}_points.csv")
-    asc_path = base_path.with_name(f"{base_path.name}_cloudcompare.asc")
-
-    points = list(points_by_voxel.values())
-
-    with csv_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(["x_mm", "y_mm", "z_mm", "distance_mm", "quality"])
-        writer.writerows(points)
-
-    with asc_path.open("w", encoding="utf-8", newline="") as handle:
-        handle.write("// x y z distance quality\n")
-        for x, y, z, distance_mm, quality in points:
-            handle.write(f"{x} {y} {z} {distance_mm} {quality}\n")
-
-    return csv_path, asc_path
+    points: list[PointRecord],
+) -> Path:
+    return save_point_csv(base_path, "points", points)
 
 
 def save_scan_settings(
@@ -310,52 +292,39 @@ def save_scan_settings(
 
 def save_hq_points(
     base_path: Path,
-    points: list[tuple[float, float, float, float, int]],
-) -> tuple[Path, Path]:
-    csv_path = base_path.with_name(f"{base_path.name}_hq_points.csv")
-    asc_path = base_path.with_name(f"{base_path.name}_hq_cloudcompare.asc")
-
-    with csv_path.open("w", newline="", encoding="utf-8") as handle:
-        writer = csv.writer(handle)
-        writer.writerow(["x_mm", "y_mm", "z_mm", "distance_mm", "quality"])
-        writer.writerows(points)
-
-    with asc_path.open("w", encoding="utf-8", newline="") as handle:
-        handle.write("// x y z distance quality\n")
-        for x, y, z, distance_mm, quality in points:
-            handle.write(f"{x} {y} {z} {distance_mm} {quality}\n")
-
-    return csv_path, asc_path
+    points: list[PointRecord],
+) -> Path:
+    return save_point_csv(base_path, "hq_points", points)
 
 
 def save_raw_points(
     base_path: Path,
-    points: list[tuple[float, float, float, float, int]],
-) -> tuple[Path, Path]:
-    csv_path = base_path.with_name(f"{base_path.name}_raw_points.csv")
-    asc_path = base_path.with_name(f"{base_path.name}_raw_cloudcompare.asc")
+    points: list[PointRecord],
+) -> Path:
+    return save_point_csv(base_path, "raw_points", points)
 
+
+def save_point_csv(
+    base_path: Path,
+    suffix: str,
+    points: list[PointRecord],
+) -> Path:
+    csv_path = base_path.with_name(f"{base_path.name}_{suffix}.csv")
     with csv_path.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.writer(handle)
         writer.writerow(["x_mm", "y_mm", "z_mm", "distance_mm", "quality"])
         writer.writerows(points)
-
-    with asc_path.open("w", encoding="utf-8", newline="") as handle:
-        handle.write("// x y z distance quality\n")
-        for x, y, z, distance_mm, quality in points:
-            handle.write(f"{x} {y} {z} {distance_mm} {quality}\n")
-
-    return csv_path, asc_path
+    return csv_path
 
 
 def merge_points_into_voxels(
-    points: list[tuple[float, float, float, float, int]],
+    points: list[PointRecord],
     voxel_size: float,
-) -> list[tuple[float, float, float, float, int]]:
+) -> list[PointRecord]:
     if voxel_size <= 0:
         return points
 
-    grouped: dict[tuple[int, int, int], list[tuple[float, float, float, float, int]]] = {}
+    grouped: dict[tuple[int, int, int], list[PointRecord]] = {}
     for point in points:
         key = voxel_key(point[0], point[1], point[2], voxel_size)
         bucket = grouped.get(key)
@@ -364,7 +333,7 @@ def merge_points_into_voxels(
             grouped[key] = bucket
         bucket.append(point)
 
-    merged_points: list[tuple[float, float, float, float, int]] = []
+    merged_points: list[PointRecord] = []
     for bucket in grouped.values():
         count = len(bucket)
         merged_points.append(
@@ -423,7 +392,7 @@ def representative_point_from_cluster(
     altitude_deg: float,
     cluster: list[tuple[float, int]],
     args: argparse.Namespace,
-) -> tuple[float, float, float, float, int] | None:
+) -> PointRecord | None:
     representative_distance = median(sample[0] for sample in cluster)
     representative_quality = max(sample[1] for sample in cluster)
     azimuth_deg = step_to_azimuth_deg(step_count, args.steps_per_rev)
@@ -445,7 +414,7 @@ def point_from_distance_and_quality(
     distance_mm: float,
     quality: int,
     args: argparse.Namespace,
-) -> tuple[float, float, float, float, int] | None:
+) -> PointRecord | None:
     azimuth_deg = step_to_azimuth_deg(step_count, args.steps_per_rev)
     x, y, z = point_from_angles(
         azimuth_deg,
@@ -478,8 +447,8 @@ def build_clean_points(
     raw_samples: list[tuple[int, float, float, int]],
     args: argparse.Namespace,
     voxel_size: float,
-) -> list[tuple[float, float, float, float, int]]:
-    cleaned_points: list[tuple[float, float, float, float, int]] = []
+) -> list[PointRecord]:
+    cleaned_points: list[PointRecord] = []
     for (step_count, altitude_deg), samples in group_raw_samples_by_ray(raw_samples).items():
         clusters = cluster_ray_samples(samples)
         primary_cluster = choose_primary_cluster(clusters)
@@ -499,8 +468,8 @@ def build_dense_points(
     raw_samples: list[tuple[int, float, float, int]],
     args: argparse.Namespace,
     voxel_size: float,
-) -> list[tuple[float, float, float, float, int]]:
-    dense_points: list[tuple[float, float, float, float, int]] = []
+) -> list[PointRecord]:
+    dense_points: list[PointRecord] = []
     for (step_count, altitude_deg), samples in group_raw_samples_by_ray(raw_samples).items():
         clusters = cluster_ray_samples(samples)
         primary_cluster = choose_primary_cluster(clusters)
@@ -533,8 +502,8 @@ def build_dense_points(
 def build_raw_points(
     raw_samples: list[tuple[int, float, float, int]],
     args: argparse.Namespace,
-) -> list[tuple[float, float, float, float, int]]:
-    raw_points: list[tuple[float, float, float, float, int]] = []
+) -> list[PointRecord]:
+    raw_points: list[PointRecord] = []
     for step_count, altitude_deg, distance_mm, quality in raw_samples:
         azimuth_deg = step_to_azimuth_deg(step_count, args.steps_per_rev)
         x, y, z = point_from_angles(
@@ -566,26 +535,22 @@ def finalize_scan_outputs(
     base_path = ensure_output_base(args.output_dir, output_prefix)
     print_status("Preparing raw point cloud...")
     raw_points = build_raw_points(raw_samples, args)
-    print_status("Saving raw point cloud files...")
-    raw_csv_path, raw_asc_path = save_raw_points(base_path, raw_points)
+    print_status("Saving raw point cloud CSV...")
+    raw_csv_path = save_raw_points(base_path, raw_points)
     print_status("Building dense outline point cloud...")
     points = build_dense_points(raw_samples, args, args.voxel_size)
     if not points:
         print("Scan finished, but all captured points were filtered out.", file=sys.stderr)
         return 1
 
-    print_status("Saving dense outline point cloud files...")
-    csv_path, asc_path = save_points(
-        base_path,
-        {(index, 0, 0): point for index, point in enumerate(points)},
-    )
+    print_status("Saving dense outline point cloud CSV...")
+    csv_path = save_points(base_path, points)
     print_status("Building HQ point cloud...")
     hq_points = build_clean_points(raw_samples, args, 0.0)
     hq_csv_path = None
-    hq_asc_path = None
     if hq_points:
-        print_status("Saving HQ point cloud files...")
-        hq_csv_path, hq_asc_path = save_hq_points(base_path, hq_points)
+        print_status("Saving HQ point cloud CSV...")
+        hq_csv_path = save_hq_points(base_path, hq_points)
 
     print_status("Writing scan settings...")
     settings_path = save_scan_settings(
@@ -600,16 +565,13 @@ def finalize_scan_outputs(
     if partial:
         print("Saved partial scan after capture interruption.", file=sys.stderr)
     print(f"Saved raw scan to {raw_csv_path}")
-    print(f"Saved raw CloudCompare file to {raw_asc_path}")
     print(f"Raw scan kept {len(raw_points)} accepted points")
     print(f"Saved scan to {csv_path}")
-    print(f"Saved CloudCompare file to {asc_path}")
     print(f"Accepted {accepted_points} raw points")
     print(f"Exported {len(points)} dense outline points")
     print(f"Saved scan settings to {settings_path}")
-    if hq_csv_path is not None and hq_asc_path is not None:
+    if hq_csv_path is not None:
         print(f"Saved HQ scan to {hq_csv_path}")
-        print(f"Saved HQ CloudCompare file to {hq_asc_path}")
         print(f"HQ scan kept {len(hq_points)} primary-surface points")
     print_status(f"Total runtime: {format_elapsed_runtime()}")
 
@@ -643,49 +605,6 @@ def maybe_report_sweep_progress(
         last_progress_bucket = bucket
 
     return step_count, last_progress_bucket
-
-
-def load_csv_points(csv_path: str) -> list[tuple[float, float, float, float, int]]:
-    points: list[tuple[float, float, float, float, int]] = []
-    with open(csv_path, newline="", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        for row in reader:
-            points.append(
-                (
-                    float(row["x_mm"]),
-                    float(row["y_mm"]),
-                    float(row["z_mm"]),
-                    float(row["distance_mm"]),
-                    int(float(row["quality"])),
-                )
-            )
-    return points
-
-
-def convert_existing_csv(args: argparse.Namespace) -> int:
-    try:
-        points = load_csv_points(args.input_csv)
-    except OSError as exc:
-        print(f"Could not open {args.input_csv}: {exc}", file=sys.stderr)
-        return 1
-    except (KeyError, ValueError) as exc:
-        print(f"Could not parse {args.input_csv}: {exc}", file=sys.stderr)
-        return 1
-
-    if not points:
-        print(f"No points found in {args.input_csv}", file=sys.stderr)
-        return 1
-
-    base_path = ensure_output_base(args.output_dir, f"{Path(args.input_csv).stem}_converted")
-    points_by_voxel = {
-        (index, 0, 0): point
-        for index, point in enumerate(points)
-    }
-    csv_path, asc_path = save_points(base_path, points_by_voxel)
-    print(f"Saved CSV copy to {csv_path}")
-    print(f"Saved CloudCompare file to {asc_path}")
-    print_status(f"Total runtime: {format_elapsed_runtime()}")
-    return 0
 
 
 def capture_from_serial(args: argparse.Namespace) -> int:
@@ -843,8 +762,6 @@ def main() -> int:
         print(f"Organized {moved_files} existing scan file(s) in {args.output_dir}")
     if args.organize_only:
         return 0
-    if args.input_csv:
-        return convert_existing_csv(args)
     return capture_from_serial(args)
 
 

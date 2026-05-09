@@ -250,15 +250,12 @@ def write_live_preview(
     base_path = live_dir / args.live_prefix
 
     dense_points = vis.build_dense_points(raw_samples, args, args.live_voxel_size)
-    dense_csv_path, _ = vis.save_points(
-        base_path,
-        {(index, 0, 0): point for index, point in enumerate(dense_points)},
-    )
+    dense_csv_path = vis.save_points(base_path, dense_points)
 
     hq_points = vis.build_clean_points(raw_samples, args, args.live_voxel_size)
     hq_csv_path: Path | None = None
     if hq_points:
-        hq_csv_path, _ = vis.save_hq_points(base_path, hq_points)
+        hq_csv_path = vis.save_hq_points(base_path, hq_points)
 
     status_path = base_path.with_name(f"{base_path.name}_status.json")
     payload = {
